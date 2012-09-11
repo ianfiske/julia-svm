@@ -6,25 +6,23 @@
 ## gcc -Wall -fPIC -c *.c *.cpp
 ## cc -shared -Wl,-soname,libsvm.so -o libsvm.so *.o
 
-#require("sparse.jl")
+libsvm = dlopen("$reposDir/julia-svm/deps/libsvm.so")
 
-libsvm = dlopen("/path/to/deps/libsvm.so")
-
-function svmnode(X::Array{Float64,2})  ## TODO:  write version for sparse X
+function svm_nodes(X::Array{Float64,2})  ## TODO:  write version for sparse X
     r = size(X)[1]
     c = size(X)[2]
     print(r)
     print(c)
     x = reshape(transpose(X), (r * c, 1))
-    svm_node = ccall(dlsym(libsvm, :sparsify),
+    svn = ccall(dlsym(libsvm, :sparsify),
                      Ptr{Void},
                      (Ptr{Float64}, Int32, Int32),
                      x, r, c)
-    return svm_node
+    return svn
 end
 
-function svmproblem(y::Array{Float64,1}, X::Array{Float64,2})
-    svn = svmnode(X)
+function svm_problem(y::Array{Float64,1}, X::Array{Float64,2})
+    svn = svm_nodes(X)
     l = int32(size(y)[1])
     svmprob = ccall(dlsym(libsvm, :_jl_svm_problem),
                     Ptr{Void},
@@ -32,13 +30,21 @@ function svmproblem(y::Array{Float64,1}, X::Array{Float64,2})
                     y, l, svn)
     return svmprob
 end
+function svm_problem(f::Formula, df::DataFrame)
+    mm = model_matrix(f, df)
+    y = mm.response[:,1]
+    X = mm.model
+    svmprob = svm_problem(y, X)
+    return svmprob
+end
+svm_problem(f::Expr, df::DataFrame) = svm_problem(Formula(f), df)
 
-svm_type_table = {"C_SVC"=>1,
+const svm_type_table = {"C_SVC"=>1,
            "NU_SVC"=>2,
            "ONE_CLASS"=>3,
            "EPSILON_SVR"=>4,
            "NU_SVR"=>5}
-kern_type_table = {"LINEAR"=>1,
+const kern_type_table = {"LINEAR"=>1,
             "POLY"=>2,
             "RBF"=>3,
             "SIGMOID"=>4,
@@ -89,36 +95,4 @@ function svmpredict(model, X)
           model, svn, r, res)
     return res
 end
-
-
-n = int(1e3)
-p = 20
-X = rand(n, p)
-y = float(randi((0, 1), n))
-
-
-svp = svmproblem(y, X)
-svparam = svmparameter("epsilon_svr", "rbf", int32(3),
-                       1., 0., 40., 0.001,
-                       1., 0.5, 
-                       1., int32(1), int32(0))
-model = svmtrain(svp, svparam)
-
-X2 = rand(10, p)
-
-pred = svmpredict(model, X2)
-
-
-## Linear regression example
-X = [linspace(0., 10., n) rand(n)]
-beta = [0.2, 0.5]
-y = X * beta + randn(n)/2
-svp = svmproblem(y, X)
-svparam = svmparameter("epsilon_svr", "rbf", int32(3),
-                       1., 0., 40., 0.001,
-                       1., 0.5, 
-                       1., int32(1), int32(0))
-model = svmtrain(svp, svparam)
-svmpredict(model, X) - X * beta
-
 
